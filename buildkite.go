@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +65,7 @@ type Client struct {
 	Members                  *MembersService
 	Meta                     *MetaService
 	Organizations            *OrganizationsService
+	OAuth                    *OAuthService
 	PackagesService          *PackagesService
 	PackageRegistriesService *PackageRegistriesService
 	Pipelines                *PipelinesService
@@ -233,6 +235,7 @@ func (c *Client) populateDefaultServices() {
 	c.Members = &MembersService{c}
 	c.Meta = &MetaService{c}
 	c.Organizations = &OrganizationsService{c}
+	c.OAuth = &OAuthService{client: c, tokenEndpoint: DefaultOAuthTokenEndpoint}
 	c.PackagesService = &PackagesService{c}
 	c.PackageRegistriesService = &PackageRegistriesService{c}
 	c.Pipelines = &PipelinesService{c}
@@ -286,6 +289,18 @@ func (c *Client) resolveURL(relPath string) (*url.URL, error) {
 	}
 
 	return &result, nil
+}
+
+// assertionRedactionRE replaces the value of client_assertion in an HTTP request
+// dump with REDACTED to prevent leaking signed JWTs in debug output.
+// Only matches form-encoded bodies (application/x-www-form-urlencoded).
+// For JSON-encoded requests, additional redaction logic would be needed.
+var assertionRedactionRE = regexp.MustCompile(`(client_assertion=)[^&\s]+`)
+
+// redactAssertion replaces the value of client_assertion in an HTTP request
+// dump with REDACTED to prevent leaking signed JWTs in debug output.
+func redactAssertion(dump []byte) []byte {
+	return assertionRedactionRE.ReplaceAll(dump, []byte(`${1}REDACTED`))
 }
 
 // NewRequest creates an API request. A relative URL can be provided in urlStr,
@@ -472,6 +487,7 @@ func (c *Client) Do(req *http.Request, v interface{}) (*Response, error) {
 
 		if c.httpDebug {
 			if dump, err := httputil.DumpRequest(req, true); err == nil {
+				dump = redactAssertion(dump)
 				fmt.Printf("DEBUG request uri=%s\n%s\n", req.URL, dump)
 			}
 		}
